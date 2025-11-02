@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PhotoBooth Web</title>
+    <title>PhotoBooth Web - Photo Strip</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         * {
@@ -76,6 +76,13 @@
             color: #666;
         }
 
+        .capture-progress {
+            font-size: 1.8em;
+            color: #667eea;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
         .countdown {
             font-size: 5em;
             color: #ff4444;
@@ -103,29 +110,43 @@
             display: none;
         }
 
-        .photos-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 15px;
+        .strip-preview {
+            display: none;
             margin-top: 20px;
+            text-align: center;
         }
 
-        .photo-item {
+        .strip-preview.show {
+            display: block;
+        }
+
+        .strip-preview img {
+            max-width: 400px;
+            width: 100%;
             border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-            cursor: pointer;
-            transition: transform 0.2s;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            margin: 20px 0;
         }
 
-        .photo-item:hover {
+        .download-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.2em;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transition: transform 0.2s;
+            margin: 10px;
+        }
+
+        .download-btn:hover {
             transform: scale(1.05);
         }
 
-        .photo-item img {
-            width: 100%;
-            height: auto;
-            display: block;
+        .download-btn:active {
+            transform: scale(0.98);
         }
 
         .performance-info {
@@ -155,10 +176,20 @@
             font-size: 0.8em;
             margin-left: 10px;
         }
+
+        .strip-badge {
+            display: inline-block;
+            background: #FF6B6B;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
-    <h1>📸 PhotoBooth Web <span class="quality-badge">HD Quality</span></h1>
+    <h1>📸 PhotoBooth Web <span class="quality-badge">HD Quality</span> <span class="strip-badge">4-Photo Strip</span></h1>
     
     <div class="container">
         <div id="videoContainer">
@@ -169,6 +200,7 @@
         <div class="status">
             <div class="status-text" id="statusText">Starting...</div>
             <div class="gesture-info" id="gestureInfo">No gesture detected</div>
+            <div class="capture-progress" id="captureProgress"></div>
             <div id="progressContainer" style="display: none;">
                 <div class="progress-bar">
                     <div class="progress-fill" id="progressFill"></div>
@@ -178,9 +210,13 @@
             <div class="performance-info" id="performanceInfo">FPS: --</div>
         </div>
 
-        <div id="photosSection" style="display: none;">
-            <h2>Captured Photos 📸</h2>
-            <div class="photos-grid" id="photosGrid"></div>
+        <div class="strip-preview" id="stripPreview">
+            <h2>🎉 Your Photo Strip is Ready!</h2>
+            <img id="stripImage" src="" alt="Photo strip">
+            <div>
+                <button class="download-btn" onclick="downloadStrip()">📥 Download Strip</button>
+                <button class="download-btn" onclick="startNewStrip()">🔄 Take New Strip</button>
+            </div>
         </div>
     </div>
 
@@ -197,28 +233,30 @@
         const countdown = document.getElementById('countdown');
         const progressContainer = document.getElementById('progressContainer');
         const progressFill = document.getElementById('progressFill');
-        const photosGrid = document.getElementById('photosGrid');
-        const photosSection = document.getElementById('photosSection');
+        const captureProgress = document.getElementById('captureProgress');
         const performanceInfo = document.getElementById('performanceInfo');
+        const stripPreview = document.getElementById('stripPreview');
+        const stripImage = document.getElementById('stripImage');
 
         let canSend = true;
-        let capturedPhotos = [];
         let frameCount = 0;
         let lastFpsUpdate = Date.now();
         let currentState = 'PROMPT_TIMER';
         let processingTimeout = null;
         let lastFrameTime = 0;
+        let currentStripFilename = null;
+        let lastCaptureTriggered = false;  // NEW: Track if we already triggered capture
 
-        // Performance settings - MAXIMUM OPTIMIZATION
-        const SCALE_FACTOR = 0.35;     // Very small for detection (448x252)
-        const JPEG_QUALITY = 0.5;      // Low quality for speed
-        const FRAME_INTERVAL = 200;    // Target 5 FPS
-        const RESPONSE_TIMEOUT = 2000; // Force reset if no response in 2s
+        // Performance settings
+        const SCALE_FACTOR = 0.35;
+        const JPEG_QUALITY = 0.5;
+        const FRAME_INTERVAL = 200;
+        const RESPONSE_TIMEOUT = 2000;
 
-        // Access webcam - Request HD quality for captures
+        // Access webcam
         navigator.mediaDevices.getUserMedia({ 
             video: { 
-                width: { ideal: 1920 },  // Request 1080p if available
+                width: { ideal: 1920 },
                 height: { ideal: 1080 },
                 facingMode: 'user'
             } 
@@ -226,7 +264,6 @@
         .then(stream => {
             video.srcObject = stream;
             video.onloadedmetadata = () => {
-                // Set canvas to reduced resolution for gesture detection
                 canvas.width = video.videoWidth * SCALE_FACTOR;
                 canvas.height = video.videoHeight * SCALE_FACTOR;
                 
@@ -241,47 +278,36 @@
             statusText.textContent = 'Error: Cannot access camera';
         });
 
-        // Send frames to server - OPTIMIZED WITH TIMEOUT PROTECTION
         function startSending() {
             setInterval(() => {
                 const now = Date.now();
                 
-                // Enforce minimum time between frames
                 if (now - lastFrameTime < FRAME_INTERVAL) {
                     return;
                 }
                 
-                // Allow sending during all states (including countdown for updates)
                 if (canSend) {
                     canSend = false;
                     lastFrameTime = now;
                     
-                    // Clear any existing timeout
                     if (processingTimeout) {
                         clearTimeout(processingTimeout);
                     }
                     
-                    // Set timeout to force reset if backend doesn't respond
                     processingTimeout = setTimeout(() => {
                         console.warn('⚠️ Backend timeout, forcing reset');
                         canSend = true;
                     }, RESPONSE_TIMEOUT);
                     
-                    // Draw downscaled image for gesture detection
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    // Convert to JPEG with lower quality for speed
                     const imageData = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
                     
                     socket.emit('video_frame', { image: imageData });
-                    
-                    // Update FPS counter
                     updateFPS();
                 }
-            }, 50); // Check every 50ms, but enforce FRAME_INTERVAL
+            }, 50);
         }
 
-        // Update FPS display
         function updateFPS() {
             frameCount++;
             const now = Date.now();
@@ -290,7 +316,6 @@
             if (elapsed >= 1000) {
                 const fps = Math.round((frameCount / elapsed) * 1000);
                 
-                // Determine FPS quality indicator
                 let indicator = '';
                 if (fps >= 4) {
                     indicator = '<span class="fps-indicator fps-good"></span>';
@@ -306,40 +331,46 @@
             }
         }
 
-        // Receive state updates
         socket.on('state_update', (data) => {
-            // Clear timeout since we got a response
             if (processingTimeout) {
                 clearTimeout(processingTimeout);
                 processingTimeout = null;
             }
             
-            canSend = true; // Allow next frame to be sent
-            currentState = data.state; // Track current state
+            canSend = true;
             
-            // DEBUG: Log state changes
-            if (data.state === 'CAPTURE_DONE') {
-                console.log('🎯 State is CAPTURE_DONE, trigger_capture:', data.trigger_capture);
+            // Detect state changes
+            const stateChanged = (currentState !== data.state);
+            currentState = data.state;
+            
+            // Reset capture trigger flag when state changes away from CAPTURE_DONE
+            if (stateChanged && currentState !== 'CAPTURE_DONE') {
+                lastCaptureTriggered = false;
             }
             
-            // Check if we should trigger photo capture
-            if (data.trigger_capture === true) {
+            // Update capture progress display
+            if (data.capture_count !== undefined && data.total_captures !== undefined) {
+                if (data.capture_count > 0) {
+                    captureProgress.textContent = `📸 Photo ${data.capture_count}/${data.total_captures} captured`;
+                    captureProgress.style.display = 'block';
+                } else {
+                    captureProgress.style.display = 'none';
+                }
+            }
+            
+            // Check if we should trigger photo capture (only once per CAPTURE_DONE state)
+            if (data.trigger_capture === true && !lastCaptureTriggered) {
                 console.log('📸 Capture triggered by state update');
-                capturePhoto();
+                lastCaptureTriggered = true;  // Mark as triggered
+                setTimeout(() => capturePhoto(), 100);
             }
             
-            // Free up memory by releasing old frame
-            if (processedFrame.src && processedFrame.src.startsWith('data:')) {
-                // Only revoke blob URLs, not data URLs
-            }
-            
-            // Show processed frame (only when not in countdown for performance)
+            // Show processed frame (except during countdown for performance)
             if (currentState !== 'COUNTDOWN') {
                 processedFrame.src = data.frame;
                 processedFrame.style.display = 'block';
                 video.style.display = 'none';
             } else {
-                // During countdown, show raw video for smoother experience
                 processedFrame.style.display = 'none';
                 video.style.display = 'block';
             }
@@ -351,19 +382,18 @@
                 gestureInfo.textContent = 'No gesture detected';
             }
             
-            // Update status based on state
             updateStatus(data);
         });
 
         function updateStatus(data) {
-            const { state, timer_value, countdown: countdownValue, streak_progress } = data;
+            const { state, timer_value, countdown: countdownValue, streak_progress, capture_count, total_captures } = data;
             
             countdown.style.display = 'none';
             progressContainer.style.display = 'none';
             
             switch(state) {
                 case 'PROMPT_TIMER':
-                    statusText.textContent = 'Welcome to PhotoBooth!';
+                    statusText.textContent = 'Welcome to PhotoBooth Strip!';
                     statusText.innerHTML += '<br><small>Show 1-5 fingers to set your timer</small>';
                     break;
                     
@@ -380,6 +410,9 @@
                 case 'AWAIT_THUMBS_UP':
                     statusText.textContent = `Timer set to ${timer_value} seconds!`;
                     statusText.innerHTML += '<br><small>👍 Thumbs up to START | 👊 Fist to CHANGE</small>';
+                    if (capture_count > 0) {
+                        statusText.innerHTML += `<br><small>Taking ${total_captures} photos total</small>`;
+                    }
                     if (streak_progress) {
                         progressContainer.style.display = 'block';
                         const percent = (streak_progress.current / streak_progress.required) * 100;
@@ -390,74 +423,113 @@
                 case 'COUNTDOWN':
                     countdown.style.display = 'block';
                     if (countdownValue !== null && countdownValue !== undefined) {
-                        countdown.textContent = countdownValue > 0 ? countdownValue : '📸 Say Cheese!';
+                        countdown.textContent = countdownValue > 0 ? countdownValue : '📸 Smile!';
                         console.log(`⏱ Countdown: ${countdownValue}`);
                     }
-                    statusText.textContent = 'Get ready!';
+                    if (capture_count > 0) {
+                        statusText.textContent = `Photo ${capture_count + 1}/${total_captures} - Get ready!`;
+                    } else {
+                        statusText.textContent = 'Get ready for first photo!';
+                    }
                     break;
                     
                 case 'CAPTURE_DONE':
-                    statusText.textContent = 'Photo captured! 🎉';
+                    if (capture_count < total_captures) {
+                        statusText.textContent = `Photo ${capture_count}/${total_captures} captured! 🎉`;
+                        statusText.innerHTML += '<br><small>Get ready for next photo...</small>';
+                    } else {
+                        statusText.textContent = 'Creating your photo strip...';
+                    }
                     break;
             }
         }
 
-        // Capture photo function - FULL HD QUALITY
         function capturePhoto() {
             console.log('📸 Capture photo function called');
-            console.log('📹 Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+            console.log(`🔍 Current capture count from last state: ${captureProgress.textContent}`);
             
-            // Create a full-resolution capture canvas
-            const captureCanvas = document.createElement('canvas');
-            captureCanvas.width = video.videoWidth;   // Full HD resolution
-            captureCanvas.height = video.videoHeight;
-            const captureCtx = captureCanvas.getContext('2d');
-            
-            // Draw at full resolution
-            captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
-            
-            // Save as high-quality PNG (lossless)
-            const imageData = captureCanvas.toDataURL('image/png');
-            
-            console.log(`✅ Image captured at ${captureCanvas.width}x${captureCanvas.height}`);
-            console.log(`📦 Image data size: ${(imageData.length / 1024).toFixed(2)} KB`);
-            
-            socket.emit('save_photo', { image: imageData });
-            console.log('📤 Sent photo to server for saving');
+            try {
+                const captureCanvas = document.createElement('canvas');
+                captureCanvas.width = video.videoWidth;
+                captureCanvas.height = video.videoHeight;
+                const captureCtx = captureCanvas.getContext('2d');
+                
+                captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+                const imageData = captureCanvas.toDataURL('image/png');
+                
+                console.log(`✅ Image captured at ${captureCanvas.width}x${captureCanvas.height}`);
+                console.log(`📦 Image size: ${(imageData.length / 1024).toFixed(2)} KB`);
+                console.log(`⏰ Timestamp: ${new Date().toLocaleTimeString()}.${new Date().getMilliseconds()}`);
+                
+                socket.emit('save_photo', { image: imageData });
+                console.log('📤 Sent photo to server for saving\n');
+            } catch (error) {
+                console.error('❌ Error capturing photo:', error);
+            }
         }
 
-        // Legacy capture photo event listener (backup)
-        socket.on('capture_photo', () => {
-            console.log('📸 Capture photo event received (legacy)');
-            capturePhoto();
-        });
-
-        // Photo saved event
-        socket.on('photo_saved', (data) => {
-            console.log('✅ Photo saved successfully:', data.filename);
-            capturedPhotos.push(data.filename);
-            displayPhotos();
+        socket.on('strip_ready', (data) => {
+            console.log('🎉 Strip ready:', data.filename);
+            currentStripFilename = data.filename;
             
-            // Show success message briefly
-            statusText.innerHTML = '🎉 Photo saved!<br><small>Show fingers to take another</small>';
+            // Show the strip preview
+            stripImage.src = `/${data.filename}`;
+            stripPreview.classList.add('show');
+            
+            // Hide video and status
+            document.getElementById('videoContainer').style.display = 'none';
+            document.querySelector('.status').style.display = 'none';
         });
 
-        function displayPhotos() {
-            if (capturedPhotos.length > 0) {
-                photosSection.style.display = 'block';
-                photosGrid.innerHTML = '';
-                capturedPhotos.forEach(filename => {
-                    const div = document.createElement('div');
-                    div.className = 'photo-item';
-                    div.innerHTML = `<img src="/${filename}" alt="Captured photo">`;
-                    div.onclick = () => window.open(`/${filename}`, '_blank');
-                    photosGrid.appendChild(div);
-                });
+        socket.on('photo_received', (data) => {
+            console.log(`✅ Photo ${data.count}/${data.total} acknowledged by server`);
+        });
+
+        socket.on('photo_error', (data) => {
+            console.error('❌ Photo error:', data.error);
+            statusText.innerHTML = `❌ Error: ${data.error}<br><small>Please try again</small>`;
+        });
+
+        function downloadStrip() {
+            if (currentStripFilename) {
+                const link = document.createElement('a');
+                link.href = `/${currentStripFilename}`;
+                link.download = currentStripFilename.split('/').pop();
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                console.log('📥 Downloading strip');
             }
+        }
+
+        function startNewStrip() {
+            // Hide strip preview
+            stripPreview.classList.remove('show');
+            
+            // Show video and status again
+            document.getElementById('videoContainer').style.display = 'block';
+            document.querySelector('.status').style.display = 'block';
+            
+            // Reset capture progress display
+            captureProgress.style.display = 'none';
+            
+            console.log('🔄 Starting new strip');
         }
 
         socket.on('connected', (data) => {
             console.log('✅ Connected to server. Session:', data.session);
+        });
+
+        socket.on('disconnect', () => {
+            console.warn('⚠️ Disconnected from server');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('❌ Connection error:', error);
+        });
+
+        socket.on('error', (error) => {
+            console.error('❌ Socket error:', error);
         });
     </script>
 </body>

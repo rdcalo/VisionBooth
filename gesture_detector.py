@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import math
+import time
 
 class GestureDetector:
     def __init__(self):
@@ -11,15 +12,39 @@ class GestureDetector:
             min_detection_confidence=0.7,
             min_tracking_confidence=0.7
         )
+        
+        # Add timestamp tracking to prevent MediaPipe errors
+        self.last_timestamp = 0
+        self.frame_counter = 0
 
     def distance(self, p1, p2):
         """Calculate Euclidean distance between two points"""
         return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2 + (p1.z - p2.z)**2)
 
     def detect_gesture(self, frame):
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(frame_rgb)
+        """Detect gesture with error handling for MediaPipe timestamp issues"""
+        
+        # Validate frame first
+        if frame is None or frame.size == 0:
+            return frame, None
+        
+        try:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        except Exception as e:
+            print(f"⚠️ Frame conversion error: {e}")
+            return frame, None
+        
+        # Process frame with MediaPipe - wrapped in try-catch for timestamp errors
         gesture_name = None
+        try:
+            results = self.hands.process(frame_rgb)
+        except Exception as e:
+            # Catch MediaPipe timestamp errors and continue
+            if "timestamp" in str(e).lower():
+                print(f"⚠️ MediaPipe timestamp error (ignoring): {e}")
+            else:
+                print(f"❌ MediaPipe error: {e}")
+            return frame, None
 
         if results.multi_hand_landmarks:
             hand_landmarks = results.multi_hand_landmarks[0]

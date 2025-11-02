@@ -9,6 +9,8 @@ import os
 import time
 from threading import Lock
 import logging
+from PIL import Image, ImageDraw, ImageFont
+import io
 
 # Reduce Flask logging for cleaner output
 log = logging.getLogger('werkzeug')
@@ -16,17 +18,25 @@ log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'photobooth_secret'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    async_mode='threading',
+    max_http_buffer_size=50 * 1024 * 1024,  # Increase buffer for large images
+    ping_timeout=60,  # Increase ping timeout
+    ping_interval=25  # Increase ping interval
+)
 
 # Initialize gesture detector with optimized settings
 gesture_detector = GestureDetector()
 
 # Optimize MediaPipe settings if possible
 try:
-    gesture_detector.hands.min_detection_confidence = 0.6  # Lower for speed
-    gesture_detector.hands.min_tracking_confidence = 0.5   # Lower for speed
+    gesture_detector.hands.min_detection_confidence = 0.6
+    gesture_detector.hands.min_tracking_confidence = 0.5
 except:
-    pass  # If gesture_detector doesn't expose these settings
+    pass
 
 # Session management
 if not os.path.exists("sessions"):
@@ -42,11 +52,14 @@ current_state = {
     'count_streak': 0,
     'thumb_up_streak': 0,
     'fist_streak': 0,
-    'capture_triggered': False  # Track if capture was triggered
+    'capture_count': 0,  # NEW: Track captures (0-4)
+    'captured_images': [],  # NEW: Store base64 images
+    'strip_filename': None  # NEW: Final strip path
 }
 state_lock = Lock()
 
 CONSECUTIVE_REQUIRED = 5
+PHOTOS_PER_STRIP = 4
 
 # ==============================
 # Routes
@@ -87,19 +100,26 @@ def handle_video_frame(data):
         nparr = np.frombuffer(img_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        if frame is None:
+        if frame is None or frame.size == 0:
             emit('state_update', {
-                'frame': data['image'],  # Send back original
+                'frame': data['image'],
                 'state': current_state['state'],
                 'timer_value': current_state['timer_value'],
                 'gesture': None,
                 'countdown': get_countdown(),
-                'streak_progress': get_streak_progress()
+                'streak_progress': get_streak_progress(),
+                'capture_count': current_state['capture_count'],
+                'total_captures': PHOTOS_PER_STRIP
             })
             return
         
-        # Detect gesture
-        frame, gesture_name = gesture_detector.detect_gesture(frame)
+        # Detect gesture - wrapped in try-catch for MediaPipe errors
+        try:
+            frame, gesture_name = gesture_detector.detect_gesture(frame)
+        except Exception as gesture_error:
+            # If gesture detection fails, continue with None gesture
+            print(f"⚠️ Gesture detection error: {gesture_error}")
+            gesture_name = None
         
         with state_lock:
             current_state['detected_gesture'] = gesture_name
@@ -122,12 +142,15 @@ def handle_video_frame(data):
                 'gesture': gesture_name,
                 'countdown': get_countdown(),
                 'streak_progress': get_streak_progress(),
-                'trigger_capture': (current_state['state'] == 'CAPTURE_DONE')  # Signal to capture
+                'trigger_capture': (current_state['state'] == 'CAPTURE_DONE'),
+                'capture_count': current_state['capture_count'],
+                'total_captures': PHOTOS_PER_STRIP,
+                'strip_ready': current_state['capture_count'] >= PHOTOS_PER_STRIP,
+                'strip_filename': current_state['strip_filename']
             })
     
     except Exception as e:
         print(f"❌ Error processing frame: {e}")
-        # Send minimal response to keep client running
         emit('state_update', {
             'frame': data.get('image', ''),
             'state': current_state['state'],
@@ -135,7 +158,9 @@ def handle_video_frame(data):
             'gesture': None,
             'countdown': get_countdown(),
             'streak_progress': get_streak_progress(),
-            'trigger_capture': False
+            'trigger_capture': False,
+            'capture_count': current_state['capture_count'],
+            'total_captures': PHOTOS_PER_STRIP
         })
 
 def process_state_machine(gesture_name):
@@ -213,11 +238,12 @@ def process_state_machine(gesture_name):
         remaining = get_countdown()
         if remaining is not None and remaining <= 0:
             current_state['state'] = 'CAPTURE_DONE'
-            print("📸 Triggering photo capture...")
+            print(f"📸 Triggering photo capture {current_state['capture_count'] + 1}/{PHOTOS_PER_STRIP}...")
     
     # STATE: CAPTURE_DONE
     elif state == 'CAPTURE_DONE':
-        # Wait for photo to be saved, then reset
+        # Wait for photo to be saved via save_photo handler
+        # Don't do anything here - let save_photo handle the next countdown
         pass
 
 def reset_to_prompt():
@@ -231,7 +257,10 @@ def reset_to_prompt():
         'last_count': None,
         'count_streak': 0,
         'thumb_up_streak': 0,
-        'fist_streak': 0
+        'fist_streak': 0,
+        'capture_count': 0,
+        'captured_images': [],
+        'strip_filename': None
     }
 
 def get_countdown():
@@ -254,49 +283,172 @@ def get_streak_progress():
 
 @socketio.on('save_photo')
 def handle_save_photo(data):
-    """Save captured photo"""
+    """Save captured photo and continue sequence"""
     global SESSION_DIR
+    
+    print(f"📸 Received photo save request. Current count: {current_state['capture_count']}")
+    
     try:
+        # Prevent duplicate captures beyond limit
+        if current_state['capture_count'] >= PHOTOS_PER_STRIP:
+            print(f"⚠️ Already captured {current_state['capture_count']} photos, ignoring duplicate")
+            return
+        
         # Ensure session directory exists
         if SESSION_DIR is None or not os.path.exists(SESSION_DIR):
             SESSION_DIR = f"sessions/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
             os.makedirs(SESSION_DIR, exist_ok=True)
             print(f"📁 Created session directory: {SESSION_DIR}")
         
-        # Decode image
-        img_str = data['image'].split(',')[1]
-        img_data = base64.b64decode(img_str)
+        # Validate image data
+        if 'image' not in data or not data['image']:
+            print("❌ No image data received")
+            emit('photo_error', {'error': 'No image data'})
+            return
         
-        # Generate filename with full path
-        timestamp = datetime.datetime.now().strftime('%H%M%S')
-        filename = f"photo_{timestamp}.png"
-        full_path = os.path.join(SESSION_DIR, filename)
+        # Store the image data for strip generation
+        img_data = data['image']
+        print(f"📦 Image data size: {len(img_data) / 1024:.2f} KB")
         
-        # Save file
-        with open(full_path, 'wb') as f:
-            f.write(img_data)
+        current_state['captured_images'].append(img_data)
+        current_state['capture_count'] += 1
         
-        # Verify file was saved
-        if os.path.exists(full_path):
-            file_size = os.path.getsize(full_path)
-            print(f"✅ [Saved] {full_path} ({file_size} bytes)")
+        print(f"✅ Photo {current_state['capture_count']}/{PHOTOS_PER_STRIP} captured and stored")
+        
+        # Emit acknowledgment immediately
+        emit('photo_received', {
+            'count': current_state['capture_count'],
+            'total': PHOTOS_PER_STRIP
+        })
+        
+        # Check if we've captured all photos
+        if current_state['capture_count'] >= PHOTOS_PER_STRIP:
+            print("🎨 Generating photo strip...")
             
-            # Send relative path for web access
-            relative_path = f"{SESSION_DIR}/{filename}"
-            emit('photo_saved', {'filename': relative_path})
+            # Change state to prevent more captures
+            current_state['state'] = 'STRIP_GENERATING'
+            
+            # Generate photo strip
+            strip_filename = create_photo_strip(current_state['captured_images'], SESSION_DIR)
+            
+            if strip_filename:
+                current_state['strip_filename'] = strip_filename
+                print(f"🎉 Photo strip complete! Saved as: {strip_filename}")
+                
+                # Send strip ready notification
+                emit('strip_ready', {
+                    'filename': strip_filename,
+                    'message': 'Photo strip is ready!'
+                })
+            else:
+                print("❌ Failed to create photo strip")
+                emit('photo_error', {'error': 'Failed to create strip'})
+            
+            # Reset for next session after a delay
+            time.sleep(1)
+            reset_to_prompt()
         else:
-            print(f"❌ Failed to save: {full_path}")
-        
-        # Reset state after photo is saved
-        time.sleep(0.5)  # Brief pause
-        reset_to_prompt()
+            # Validate timer_value before continuing
+            if current_state['timer_value'] is None or current_state['timer_value'] <= 0:
+                print("❌ Invalid timer_value, resetting")
+                reset_to_prompt()
+                return
+            
+            # NOW restart countdown for next photo (after current photo is saved)
+            print(f"⏭ Preparing for photo {current_state['capture_count'] + 1}/{PHOTOS_PER_STRIP}")
+            
+            # Brief pause before starting next countdown
+            time.sleep(1)
+            
+            current_time = time.time()
+            current_state['countdown_end'] = current_time + current_state['timer_value']
+            current_state['state'] = 'COUNTDOWN'
+            
+            print(f"▶ Starting countdown for photo {current_state['capture_count'] + 1}/{PHOTOS_PER_STRIP}")
         
     except Exception as e:
         print(f"❌ Error saving photo: {e}")
         import traceback
         traceback.print_exc()
-        # Still reset state even if save failed
+        emit('photo_error', {'error': str(e)})
+        # Reset on error to prevent stuck state
         reset_to_prompt()
+
+def create_photo_strip(images, session_dir):
+    """Create a vertical photo strip from captured images"""
+    try:
+        # Configuration
+        PHOTO_WIDTH = 800
+        PHOTO_HEIGHT = 600
+        BORDER_SIZE = 20
+        FRAME_COLOR = (173, 216, 230)  # Light blue frame
+        
+        # Calculate strip dimensions
+        strip_width = PHOTO_WIDTH + (BORDER_SIZE * 2)
+        strip_height = (PHOTO_HEIGHT * PHOTOS_PER_STRIP) + (BORDER_SIZE * (PHOTOS_PER_STRIP + 1))
+        
+        # Create blank canvas with border color
+        strip = Image.new('RGB', (strip_width, strip_height), FRAME_COLOR)
+        
+        # Paste each photo
+        for idx, img_data in enumerate(images):
+            # Decode base64 image
+            img_str = img_data.split(',')[1]
+            img_bytes = base64.b64decode(img_str)
+            
+            # Open with PIL
+            photo = Image.open(io.BytesIO(img_bytes))
+            
+            # Resize to standard size
+            photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
+            
+            # Calculate position
+            y_position = BORDER_SIZE + (idx * (PHOTO_HEIGHT + BORDER_SIZE))
+            
+            # Paste photo onto strip
+            strip.paste(photo, (BORDER_SIZE, y_position))
+        
+        # Add timestamp at bottom
+        draw = ImageDraw.Draw(strip)
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Try to use a nice font, fallback to default
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        except:
+            font = ImageFont.load_default()
+        
+        # Draw text at bottom center
+        text_bbox = draw.textbbox((0, 0), timestamp, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_x = (strip_width - text_width) // 2
+        text_y = strip_height - BORDER_SIZE + 5
+        
+        # Add text shadow for visibility
+        draw.text((text_x + 2, text_y + 2), timestamp, fill=(0, 0, 0), font=font)
+        draw.text((text_x, text_y), timestamp, fill=(255, 255, 255), font=font)
+        
+        # Save the strip
+        timestamp_filename = datetime.datetime.now().strftime('%H%M%S')
+        filename = f"strip_{timestamp_filename}.png"
+        full_path = os.path.join(session_dir, filename)
+        
+        strip.save(full_path, 'PNG')
+        
+        # Verify and return relative path
+        if os.path.exists(full_path):
+            file_size = os.path.getsize(full_path)
+            print(f"✅ [Strip Saved] {full_path} ({file_size} bytes)")
+            return f"{session_dir}/{filename}"
+        else:
+            print(f"❌ Failed to save strip: {full_path}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error creating photo strip: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 # ==============================
 # Run App

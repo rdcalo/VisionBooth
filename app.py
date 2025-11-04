@@ -1,5 +1,6 @@
 import os
-os.environ['GLOG_minloglevel'] = '2'  # Suppress MediaPipe warnings
+os.environ['GLOG_minloglevel'] = '3'  # Suppress all MediaPipe logs (0=INFO, 1=WARNING, 2=ERROR, 3=FATAL)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow warnings
 
 from flask import Flask, render_template, Response, jsonify, send_from_directory, url_for
 from flask_socketio import SocketIO, emit
@@ -310,41 +311,110 @@ def handle_save_photo(data):
         emit('photo_error', {'error': str(e)})
 
 # ======================================
-# PHOTO STRIP CREATION
+# PHOTO STRIP CREATION - PROFESSIONAL STYLE
 # ======================================
 
 def create_photo_strip(images, session_dir):
     try:
-        PHOTO_WIDTH, PHOTO_HEIGHT, BORDER = 800, 600, 20
-        FRAME_COLOR = (173, 216, 230)
-
-        strip_width = PHOTO_WIDTH + BORDER * 2
-        strip_height = PHOTO_HEIGHT * PHOTOS_PER_STRIP + BORDER * (PHOTOS_PER_STRIP + 1)
-        strip = Image.new('RGB', (strip_width, strip_height), FRAME_COLOR)
-
+        # Target dimensions: 51mm x 152mm at 300 DPI
+        DPI = 300
+        STRIP_WIDTH_MM = 51
+        STRIP_HEIGHT_MM = 152
+        
+        # Convert mm to pixels at 300 DPI
+        MM_TO_INCH = 0.0393701
+        STRIP_WIDTH_PX = int(STRIP_WIDTH_MM * MM_TO_INCH * DPI)  # ~602px
+        STRIP_HEIGHT_PX = int(STRIP_HEIGHT_MM * MM_TO_INCH * DPI)  # ~1795px
+        
+        # Border and spacing
+        TOP_BORDER = 60
+        SIDE_BORDER = 60
+        PHOTO_SPACING = 40
+        BOTTOM_AREA = 100  # Space for timestamp/logo
+        
+        # Calculate photo dimensions - SQUARE/PORTRAIT aspect ratio
+        available_height = STRIP_HEIGHT_PX - TOP_BORDER - BOTTOM_AREA - (PHOTO_SPACING * (PHOTOS_PER_STRIP - 1))
+        PHOTO_HEIGHT = available_height // PHOTOS_PER_STRIP
+        PHOTO_WIDTH = STRIP_WIDTH_PX - (SIDE_BORDER * 2)
+        
+        print(f"📐 Strip size: {STRIP_WIDTH_PX}x{STRIP_HEIGHT_PX}px ({STRIP_WIDTH_MM}x{STRIP_HEIGHT_MM}mm)")
+        print(f"📸 Photo slots: {PHOTO_WIDTH}x{PHOTO_HEIGHT}px")
+        
+        # Create white background strip
+        FRAME_COLOR = (255, 255, 255)
+        strip = Image.new('RGB', (STRIP_WIDTH_PX, STRIP_HEIGHT_PX), FRAME_COLOR)
+        
+        # Process and paste photos with CENTER CROP
         for i, img_data in enumerate(images):
             img_bytes = base64.b64decode(img_data.split(',')[1])
-            photo = Image.open(io.BytesIO(img_bytes)).resize((PHOTO_WIDTH, PHOTO_HEIGHT))
-            y_pos = BORDER + i * (PHOTO_HEIGHT + BORDER)
-            strip.paste(photo, (BORDER, y_pos))
-
+            photo = Image.open(io.BytesIO(img_bytes))
+            
+            # Calculate target aspect ratio for slot
+            target_aspect = PHOTO_WIDTH / PHOTO_HEIGHT
+            photo_aspect = photo.width / photo.height
+            
+            # CENTER CROP to fill the slot completely
+            if photo_aspect > target_aspect:
+                # Photo is wider - crop left and right
+                new_width = int(photo.height * target_aspect)
+                left = (photo.width - new_width) // 2
+                photo = photo.crop((left, 0, left + new_width, photo.height))
+            else:
+                # Photo is taller - crop top and bottom
+                new_height = int(photo.width / target_aspect)
+                top = (photo.height - new_height) // 2
+                photo = photo.crop((0, top, photo.width, top + new_height))
+            
+            # Resize to exact slot dimensions
+            photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
+            
+            # Paste photo in slot (no centering needed - fills completely)
+            y_pos = TOP_BORDER + i * (PHOTO_HEIGHT + PHOTO_SPACING)
+            strip.paste(photo, (SIDE_BORDER, y_pos))
+        
+        # Add VisionBooth branding at bottom
         draw = ImageDraw.Draw(strip)
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get current date in format: VisionBooth 11/04/25
+        now = datetime.datetime.now()
+        branding_text = f"VisionBooth {now.strftime('%m/%d/%y')}"
+        
+        # Load font
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
         except:
-            font = ImageFont.load_default()
-        tw, th = draw.textbbox((0, 0), timestamp, font=font)[2:]
-        tx, ty = (strip_width - tw) // 2, strip_height - BORDER + 5
-        draw.text((tx + 2, ty + 2), timestamp, fill=(0, 0, 0), font=font)
-        draw.text((tx, ty), timestamp, fill=(255, 255, 255), font=font)
-
-        filename = f"strip_{datetime.datetime.now().strftime('%H%M%S')}.png"
+            try:
+                font = ImageFont.truetype("arial.ttf", 36)
+            except:
+                font = ImageFont.load_default()
+        
+        # Calculate text position (centered at bottom)
+        bbox = draw.textbbox((0, 0), branding_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        text_x = (STRIP_WIDTH_PX - text_width) // 2
+        text_y = STRIP_HEIGHT_PX - BOTTOM_AREA + (BOTTOM_AREA - text_height) // 2
+        
+        # Draw text with shadow for depth
+        shadow_offset = 2
+        draw.text((text_x + shadow_offset, text_y + shadow_offset), branding_text, fill=(200, 200, 200), font=font)
+        draw.text((text_x, text_y), branding_text, fill=(50, 50, 50), font=font)
+        
+        # Save with high quality
+        filename = f"strip_{now.strftime('%Y%m%d_%H%M%S')}.png"
         path = os.path.join(session_dir, filename)
-        strip.save(path)
+        strip.save(path, dpi=(DPI, DPI), quality=95, optimize=False)
+        
+        print(f"✅ Strip saved: {path}")
+        print(f"   Size: {STRIP_WIDTH_PX}x{STRIP_HEIGHT_PX}px | {STRIP_WIDTH_MM}x{STRIP_HEIGHT_MM}mm @ {DPI}DPI")
+        
         return f"{session_dir}/{filename}" if os.path.exists(path) else None
+        
     except Exception as e:
         print(f"❌ Error creating strip: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ======================================

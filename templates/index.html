@@ -107,49 +107,49 @@
             position: relative;
             width: 100%;
             max-width: 850px;
-            aspect-ratio: 16/9; /* FIXED: Maintain consistent aspect ratio */
+            aspect-ratio: 16/9;
             background: #000;
             border-radius: 20px;
             overflow: hidden;
-            margin: 0 0 15px 0; /* FIXED: Reduced bottom margin */
+            margin: 0;
             border: 6px solid #101b40;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
         }
 
         #video, #processedFrame {
-            position: absolute; /* FIXED: Both elements positioned absolutely */
+            position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            object-fit: cover; /* FIXED: Ensure consistent sizing */
+            object-fit: cover;
             display: block;
         }
 
         #processedFrame {
-            display: none; /* Hidden by default */
+            display: none;
         }
 
         .countdown-display {
             font-size: 6em;
             font-weight: 800;
             color: #101b40;
-            margin: 10px 0 15px; /* FIXED: Reduced margins */
-            min-height: 80px; /* FIXED: Reduced min-height */
+            margin: 5px 0 5px;
+            min-height: 80px;
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
         .info-section {
-            margin-top: 10px; /* FIXED: Reduced margin */
+            margin-top: 5px;
         }
 
         .info-text {
             font-size: 1.4em;
             font-weight: 600;
             color: #101b40;
-            margin-bottom: 12px; /* FIXED: Reduced margin */
+            margin-bottom: 8px;
         }
 
         .action-btn {
@@ -164,7 +164,7 @@
             transition: all 0.3s ease;
             text-decoration: none;
             box-shadow: 0 4px 12px rgba(16,27,64,0.25);
-            margin-top: 5px; /* FIXED: Reduced margin */
+            margin-top: 5px;
         }
 
         .action-btn:hover {
@@ -177,14 +177,14 @@
         .gesture-display {
             font-size: 1em;
             color: #333;
-            margin-top: 12px; /* FIXED: Reduced margin */
+            margin-top: 8px;
             font-weight: 500;
         }
 
         .progress-bar-container {
             width: 100%;
             max-width: 500px;
-            margin: 15px auto; /* FIXED: Reduced margin */
+            margin: 10px auto;
         }
 
         .progress-bar {
@@ -203,61 +203,101 @@
             transition: width 0.3s ease;
         }
 
-        /* Photo Strip Preview */
+        /* Photo Strip Preview - COMPLETELY REDESIGNED */
         .strip-preview {
             display: none;
-            text-align: center;
-            margin-top: 20px; /* FIXED: Reduced margin */
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background-color: #f1f1f1;
+            z-index: 999;
         }
 
         .strip-preview.show {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 80px;
+            padding: 40px;
         }
 
-        .strip-preview h2 {
-            font-size: 2em;
-            font-weight: 700;
-            margin-bottom: 20px; /* FIXED: Reduced margin */
-            color: #101b40;
+        .strip-container {
+            flex-shrink: 0;
         }
 
         .strip-preview img {
-            width: 100%;
-            max-width: 400px;
-            border-radius: 20px;
-            border: 6px solid #101b40;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
-            margin-bottom: 25px; /* FIXED: Reduced margin */
+            display: block;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-height: 85vh;
+            width: auto;
+            height: auto;
+        }
+
+        .completion-content {
+            flex-shrink: 0;
+            text-align: left;
+            max-width: 600px;
+        }
+
+        .thank-you-text {
+            font-size: 1.5em;
+            font-weight: 400;
+            color: #101b40;
+            margin-bottom: 8px;
+            letter-spacing: 0.3px;
+        }
+
+        .visionbooth-title {
+            font-size: 5em;
+            font-weight: 800;
+            color: #101b40;
+            margin-bottom: 25px;
+            line-height: 1;
+            letter-spacing: -1px;
+        }
+
+        .ready-text {
+            font-size: 1.5em;
+            font-weight: 400;
+            color: #101b40;
+            margin-bottom: 40px;
+            letter-spacing: 0.3px;
         }
 
         .button-group {
             display: flex;
-            gap: 20px;
-            justify-content: center;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 18px;
+            align-items: flex-start;
         }
 
         .download-btn {
-            padding: 14px 40px;
-            font-size: 1.1em;
-            font-weight: 700;
+            padding: 18px 60px;
+            font-size: 1.15em;
+            font-weight: 600;
             border-radius: 50px;
-            background-color: #101b40;
-            color: white;
-            border: 3px solid #101b40;
+            background-color: transparent;
+            color: #101b40;
+            border: 2.5px solid #101b40;
+            cursor: pointer;
             transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            min-width: 240px;
         }
 
         .download-btn:hover {
-            background-color: white;
-            color: #101b40;
-            transform: translateY(-2px);
+            background-color: #101b40;
+            color: white;
+            transform: translateX(8px);
         }
 
         .performance-info {
             font-size: 0.9em;
             color: #777;
-            margin-top: 15px; /* FIXED: Reduced margin */
+            margin-top: 10px;
         }
 
         .hidden {
@@ -265,6 +305,36 @@
         }
 
         /* Responsive */
+        @media (max-width: 1024px) {
+            .strip-preview.show {
+                flex-direction: column;
+                gap: 40px;
+                justify-content: center;
+            }
+
+            .strip-preview img {
+                width: 240px;
+            }
+
+            .completion-content {
+                text-align: center;
+            }
+
+            .visionbooth-title {
+                font-size: 3.5em;
+            }
+
+            .button-group {
+                align-items: center;
+                width: 100%;
+            }
+
+            .download-btn {
+                width: 100%;
+                max-width: 320px;
+            }
+        }
+
         @media (max-width: 768px) {
             nav {
                 flex-direction: column;
@@ -291,6 +361,22 @@
             .countdown-display {
                 font-size: 3.5em;
                 min-height: 60px;
+            }
+
+            .strip-preview img {
+                width: 200px;
+            }
+
+            .thank-you-text {
+                font-size: 1.2em;
+            }
+
+            .visionbooth-title {
+                font-size: 2.5em;
+            }
+
+            .ready-text {
+                font-size: 1.2em;
             }
         }
     </style>
@@ -334,16 +420,23 @@
 
         <p class="gesture-display" id="gestureDisplay">Gesture detected: None</p>
 
-        <div class="strip-preview" id="stripPreview">
-            <h2>🎉 Your Photo Strip is Ready!</h2>
+        <p class="performance-info" id="performanceInfo">FPS: --</p>
+    </div>
+
+    <!-- Photo Strip Preview - REDESIGNED -->
+    <div class="strip-preview" id="stripPreview">
+        <div class="strip-container">
             <img id="stripImage" src="" alt="Photo strip">
+        </div>
+        <div class="completion-content">
+            <p class="thank-you-text">Thank you for trying out</p>
+            <h2 class="visionbooth-title">VisionBooth</h2>
+            <p class="ready-text">Your photo strip is ready to download!</p>
             <div class="button-group">
-                <button class="download-btn" onclick="downloadStrip()">📥 Download Strip</button>
-                <button class="download-btn" onclick="startNewStrip()">🔄 Take New Strip</button>
+                <button class="download-btn" onclick="downloadStrip()">DOWNLOAD</button>
+                <button class="download-btn" onclick="startNewStrip()">RETAKE</button>
             </div>
         </div>
-
-        <p class="performance-info" id="performanceInfo">FPS: --</p>
     </div>
 
     <canvas id="canvas" style="display: none;"></canvas>
@@ -468,11 +561,10 @@
                 setTimeout(() => capturePhoto(), 100);
             }
             
-            // FIXED: Always show video, overlay processed frame on top when available
             if (currentState !== 'COUNTDOWN' && data.frame) {
                 processedFrame.src = data.frame;
                 processedFrame.style.display = 'block';
-                video.style.display = 'block'; // Keep video as base
+                video.style.display = 'block';
             } else {
                 processedFrame.style.display = 'none';
                 video.style.display = 'block';
@@ -574,17 +666,14 @@
             console.log('🎉 Strip ready:', data.filename);
             currentStripFilename = data.filename;
             
-            stripImage.src = `/${data.filename}`;
-            stripPreview.classList.add('show');
-            
-            document.getElementById('videoContainer').style.display = 'none';
-            statusTitle.style.display = 'none';
-            countdownDisplay.style.display = 'none';
-            infoText.style.display = 'none';
-            resetBtn.style.display = 'none';
-            gestureDisplay.style.display = 'none';
-            progressContainer.style.display = 'none';
-            performanceInfo.style.display = 'none';
+            // Preload image to get natural dimensions
+            const img = new Image();
+            img.onload = function() {
+                console.log(`📐 Photo strip dimensions: ${img.naturalWidth}x${img.naturalHeight}`);
+                stripImage.src = `/${data.filename}`;
+                stripPreview.classList.add('show');
+            };
+            img.src = `/${data.filename}`;
         });
 
         socket.on('photo_received', (data) => {
@@ -611,15 +700,8 @@
 
         function startNewStrip() {
             stripPreview.classList.remove('show');
-            
-            document.getElementById('videoContainer').style.display = 'block';
-            statusTitle.style.display = 'block';
-            countdownDisplay.style.display = 'flex';
-            infoText.style.display = 'block';
-            gestureDisplay.style.display = 'block';
-            performanceInfo.style.display = 'block';
-            
             console.log('🔄 Starting new strip');
+            location.reload();
         }
 
         function resetSession() {

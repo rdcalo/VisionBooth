@@ -203,7 +203,6 @@
             transition: width 0.3s ease;
         }
 
-        /* Photo Strip Preview - COMPLETELY REDESIGNED */
         .strip-preview {
             display: none;
             position: fixed;
@@ -304,7 +303,6 @@
             display: none !important;
         }
 
-        /* Responsive */
         @media (max-width: 1024px) {
             .strip-preview.show {
                 flex-direction: column;
@@ -423,7 +421,6 @@
         <p class="performance-info" id="performanceInfo">FPS: --</p>
     </div>
 
-    <!-- Photo Strip Preview - REDESIGNED -->
     <div class="strip-preview" id="stripPreview">
         <div class="strip-container">
             <img id="stripImage" src="" alt="Photo strip">
@@ -486,8 +483,8 @@
                 canvas.width = video.videoWidth * SCALE_FACTOR;
                 canvas.height = video.videoHeight * SCALE_FACTOR;
                 
-                console.log(`📹 Video Resolution: ${video.videoWidth}x${video.videoHeight}`);
-                console.log(`🔍 Detection Resolution: ${canvas.width}x${canvas.height}`);
+                console.log(`Video Resolution: ${video.videoWidth}x${video.videoHeight}`);
+                console.log(`Detection Resolution: ${canvas.width}x${canvas.height}`);
                 
                 startSending();
             };
@@ -514,7 +511,7 @@
                     }
                     
                     processingTimeout = setTimeout(() => {
-                        console.warn('⚠️ Backend timeout, forcing reset');
+                        console.warn('Backend timeout, forcing reset');
                         canSend = true;
                     }, RESPONSE_TIMEOUT);
                     
@@ -556,7 +553,7 @@
             }
             
             if (data.trigger_capture === true && !lastCaptureTriggered) {
-                console.log('📸 Capture triggered by state update');
+                console.log('Capture triggered by state update');
                 lastCaptureTriggered = true;
                 setTimeout(() => capturePhoto(), 100);
             }
@@ -622,7 +619,7 @@
                             infoText.textContent = 'Pose and hold still! Taking your photos!';
                         } else {
                             statusTitle.textContent = '';
-                            countdownDisplay.textContent = '📸';
+                            countdownDisplay.textContent = '.';
                             infoText.textContent = 'Smile!';
                         }
                     }
@@ -642,7 +639,7 @@
         }
 
         function capturePhoto() {
-            console.log('📸 Capture photo function called');
+            console.log('Capture photo function called');
             
             try {
                 const captureCanvas = document.createElement('canvas');
@@ -653,23 +650,22 @@
                 captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
                 const imageData = captureCanvas.toDataURL('image/png');
                 
-                console.log(`✅ Image captured at ${captureCanvas.width}x${captureCanvas.height}`);
+                console.log(`Image captured at ${captureCanvas.width}x${captureCanvas.height}`);
                 
                 socket.emit('save_photo', { image: imageData });
-                console.log('📤 Sent photo to server for saving');
+                console.log('Sent photo to server for saving');
             } catch (error) {
-                console.error('❌ Error capturing photo:', error);
+                console.error('Error capturing photo:', error);
             }
         }
 
         socket.on('strip_ready', (data) => {
-            console.log('🎉 Strip ready:', data.filename);
+            console.log('Strip ready:', data.filename);
             currentStripFilename = data.filename;
-            
-            // Preload image to get natural dimensions
+    
             const img = new Image();
             img.onload = function() {
-                console.log(`📐 Photo strip dimensions: ${img.naturalWidth}x${img.naturalHeight}`);
+                console.log(`Photo strip dimensions: ${img.naturalWidth}x${img.naturalHeight}`);
                 stripImage.src = `/${data.filename}`;
                 stripPreview.classList.add('show');
             };
@@ -677,11 +673,11 @@
         });
 
         socket.on('photo_received', (data) => {
-            console.log(`✅ Photo ${data.count}/${data.total} acknowledged by server`);
+            console.log(`Photo ${data.count}/${data.total} acknowledged by server`);
         });
 
         socket.on('photo_error', (data) => {
-            console.error('❌ Photo error:', data.error);
+            console.error('Photo error:', data.error);
             statusTitle.textContent = `Error: ${data.error}`;
             infoText.textContent = 'Please try again';
         });
@@ -694,13 +690,13 @@
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-                console.log('📥 Downloading strip');
+                console.log('Downloading strip');
             }
         }
 
         function startNewStrip() {
             stripPreview.classList.remove('show');
-            console.log('🔄 Starting new strip');
+            console.log('Starting new strip');
             location.reload();
         }
 
@@ -709,19 +705,19 @@
         }
 
         socket.on('connected', (data) => {
-            console.log('✅ Connected to server. Session:', data.session);
+            console.log('Connected to server. Session:', data.session);
         });
 
         socket.on('disconnect', () => {
-            console.warn('⚠️ Disconnected from server');
+            console.warn('Disconnected from server');
         });
 
         socket.on('connect_error', (error) => {
-            console.error('❌ Connection error:', error);
+            console.error('Connection error:', error);
         });
 
         socket.on('error', (error) => {
-            console.error('❌ Socket error:', error);
+            console.error('Socket error:', error);
         });
     </script>
 </body>
